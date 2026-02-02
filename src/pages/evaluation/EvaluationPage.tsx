@@ -61,7 +61,7 @@ export default function EvaluationPage() {
                     <p className="text-muted-foreground">Detailed analysis of your recent session.</p>
                 </div>
                 <Button asChild>
-                    <Link to="/interview">Practise Again</Link>
+                    <Link to="/interview/upload">Practise Again</Link>
                 </Button>
             </div>
 

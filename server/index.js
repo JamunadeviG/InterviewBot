@@ -7,9 +7,12 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 import dotenv from 'dotenv';
-import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.env') });
 
 const app = express();
 const port = 5000;
@@ -17,11 +20,55 @@ const port = 5000;
 app.use(cors());
 app.use(express.json());
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
+
+// Ensure temp directory exists
+const tempDir = path.join(__dirname, 'temp');
+if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir);
+}
+
+const runOcr = (filePath) => {
+    return new Promise((resolve, reject) => {
+        const pythonProcess = spawn('python', [path.join(__dirname, 'ocr_engine.py'), filePath]);
+
+        let output = '';
+        let errorOutput = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+        });
+
+        pythonProcess.on('close', (code) => {
+            if (code !== 0) {
+                console.error("OCR stderr:", errorOutput);
+                reject(new Error(`OCR process exited with code ${code}`));
+                return;
+            }
+            try {
+                const result = JSON.parse(output);
+                if (result.error) {
+                    reject(new Error(result.error));
+                } else {
+                    resolve(result.text);
+                }
+            } catch (err) {
+                console.error("OCR raw output:", output);
+                reject(new Error("Failed to parse OCR output"));
+            }
+        });
+    });
+};
 
 app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
     try {
@@ -33,20 +80,53 @@ app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
         const buffer = req.file.buffer;
         const mimeType = req.file.mimetype;
 
-        if (mimeType === 'application/pdf') {
-            const data = await pdfParse(buffer);
-            text = data.text;
-        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            const result = await mammoth.extractRawText({ buffer: buffer });
-            text = result.value;
-        } else {
-            return res.status(400).json({ error: 'Unsupported file type. Please upload PDF or DOCX.' });
+        // Stage 1: Direct Extraction
+        console.log(`[Stage 1] Attempting direct extraction for mimeType: ${mimeType}`);
+        try {
+            if (mimeType === 'application/pdf') {
+                const data = await pdfParse(buffer);
+                text = data.text;
+                console.log(`[Stage 1] pdf-parse extracted ${text?.length || 0} characters.`);
+            } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                const result = await mammoth.extractRawText({ buffer: buffer });
+                text = result.value;
+                console.log(`[Stage 1] mammoth extracted ${text?.length || 0} characters.`);
+            } else {
+                return res.status(400).json({ error: 'Unsupported file type. Please upload PDF or DOCX.' });
+            }
+        } catch (extractErr) {
+            console.warn("[Stage 1] Direct extraction failed:", extractErr.message);
         }
 
-        const cleanedText = text.replace(/\s+/g, ' ').trim();
+        let cleanedText = text ? text.replace(/\s+/g, ' ').trim() : '';
+        const isLowQuality = cleanedText.length < 50;
+
+        // Stage 2: OCR Fallback
+        if (isLowQuality && mimeType === 'application/pdf') {
+            console.log("[Stage 2] Text is empty or low quality (< 50 chars). Falling back to PaddleOCR...");
+
+            const tempFilePath = path.join(tempDir, `resume_${Date.now()}.pdf`);
+            fs.writeFileSync(tempFilePath, buffer);
+
+            try {
+                const ocrText = await runOcr(tempFilePath);
+                cleanedText = ocrText.replace(/\s+/g, ' ').trim();
+                console.log(`[Stage 2] OCR extracted ${cleanedText.length} characters.`);
+            } catch (ocrErr) {
+                console.error("[Stage 2] OCR fallback failed:", ocrErr.message);
+            } finally {
+                if (fs.existsSync(tempFilePath)) {
+                    fs.unlinkSync(tempFilePath);
+                }
+            }
+        } else if (isLowQuality) {
+            console.log(`[Stage 1] Direct extraction returned low quality text for non-PDF format. Skipping OCR.`);
+        } else {
+            console.log(`[Stage 1] Direct extraction was successful (${cleanedText.length} chars). Skipping OCR.`);
+        }
 
         if (cleanedText.length < 50) {
-            return res.status(422).json({ error: 'The document appears to be empty or unreadable. Please upload a clear text-based RESUME.' });
+            return res.status(422).json({ error: 'The document appears to be empty or unreadable even after OCR. Please upload a clearer PDF.' });
         }
 
         res.json({ text: cleanedText });
@@ -103,7 +183,6 @@ app.post('/api/generate-questions', async (req, res) => {
         }
 
         const data = JSON.parse(content);
-        // basic validation could go here
 
         res.json(data);
 
