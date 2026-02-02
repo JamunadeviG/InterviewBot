@@ -57,7 +57,7 @@ export default function InterviewPage() {
         setIsLoading(true);
 
         try {
-            const botResponse = await api.interview.answer(session.id, input);
+            const botResponse = await api.interview.answer();
             setSession((prev) =>
                 prev ? { ...prev, messages: [...prev.messages, botResponse] } : null
             );

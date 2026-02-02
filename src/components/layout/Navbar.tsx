@@ -7,15 +7,26 @@ import { cn } from "@/lib/utils";
 export function Navbar() {
     const [isOpen, setIsOpen] = useState(false);
     const location = useLocation();
-    const isLoggedIn = true; // TODO: Mock auth state
+
+    // Check auth state + get user ID
+    const userStr = localStorage.getItem("user");
+    const user = userStr ? JSON.parse(userStr) : null;
+    const isLoggedIn = !!user;
 
     const navLinks = [
         { name: "Home", href: "/" },
-        { name: "Roadmap", href: "/roadmap" },
+        { name: "Roadmap", href: user ? `/roadmap/${user.id}` : "/login" }, // Redirect to login if no user
         { name: "Interview", href: "/interview" },
         { name: "Evaluation", href: "/evaluation" },
+        { name: "Login", href: "/login" },
         { name: "Contact", href: "/contact" },
+
     ];
+
+    if (!isLoggedIn) {
+        navLinks.push({ name: "", href: "/login" });
+        navLinks.push({ name: "", href: "/signup" });
+    }
 
     return (
         <nav className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
@@ -47,7 +58,16 @@ export function Navbar() {
 
                 <div className="hidden md:flex items-center gap-4">
                     {isLoggedIn ? (
-                        <Button variant="ghost" size="sm" className="gap-2">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => {
+                                localStorage.removeItem("user");
+                                localStorage.removeItem("token");
+                                window.location.href = "/login";
+                            }}
+                        >
                             <LogOut className="h-4 w-4" />
                             Logout
                         </Button>

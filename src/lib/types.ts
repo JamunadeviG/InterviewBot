@@ -1,4 +1,4 @@
-export type Role = "Software Engineer" | "Data Analyst" | "ML Engineer";
+export type Role = "Software Engineer" | "Data Scientist" | "ML Engineer";
 
 export interface User {
     id: string;
@@ -7,20 +7,44 @@ export interface User {
     role: Role;
 }
 
+export type ResourceType = "video" | "documentation" | "course" | "article";
+
+export interface Resource {
+    id: string;
+    title: string;
+    url: string;
+    type: ResourceType;
+}
+
 export interface RoadmapItem {
     id: string;
     title: string;
     description: string;
-    status: "pending" | "in-progress" | "completed";
-    category: string;
+    status: string;
+    resources: Resource[];
+    completedResources: string[];
+}
+
+export interface Section {
+    title: string;
+    items: RoadmapItem[];
 }
 
 export interface Roadmap {
     role: Role;
-    sections: {
-        title: string;
-        items: RoadmapItem[];
-    }[];
+    sections: Section[];
+}
+
+export interface ProgressData {
+    [role: string]: Roadmap;
+}
+
+export interface AnalyticsEvent {
+    id: string;
+    userId: string;
+    action: string;
+    data: any;
+    timestamp: string;
 }
 
 export interface Message {
