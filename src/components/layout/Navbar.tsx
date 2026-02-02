@@ -35,7 +35,7 @@ export function Navbar() {
     const navLinks = [
         { name: "Home", href: "/" },
         { name: "Roadmap", href: "/roadmap" },
-        { name: "Interview", href: "/interview" },
+        { name: "Interview", href: "/interview/upload" },
         { name: "Evaluation", href: "/evaluation" },
         { name: "Contact", href: "/contact" },
     ];
