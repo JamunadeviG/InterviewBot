@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, CheckCircle, ChevronRight, AlertCircle, RefreshCw, Trophy } from 'lucide-react';
+import { Loader2, CheckCircle, ChevronRight, AlertCircle, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api';
 import type { InterviewData } from '@/services/api';
 
@@ -18,7 +18,6 @@ export default function InterviewSession() {
     const [answer, setAnswer] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [completed, setCompleted] = useState(false);
 
     useEffect(() => {
         if (!resumeText) {
@@ -41,13 +40,40 @@ export default function InterviewSession() {
         fetchQuestions();
     }, [resumeText, navigate]);
 
-    const handleNext = () => {
-        if (!data) return;
-        setAnswer('');
-        if (currentQuestionIndex < data.questions.length - 1) {
-            setCurrentQuestionIndex(prev => prev + 1);
-        } else {
-            setCompleted(true);
+    const [evaluations, setEvaluations] = useState<any[]>([]);
+    const [isEvaluating, setIsEvaluating] = useState(false);
+
+    const handleNext = async () => {
+        if (!data || isEvaluating) return;
+
+        const currentQuestion = data.questions[currentQuestionIndex];
+
+        try {
+            setIsEvaluating(true);
+            const evaluation = await api.evaluateAnswer(
+                currentQuestion.question,
+                currentQuestion.topic,
+                answer
+            );
+
+            const updatedEvaluations = [...evaluations, {
+                question: currentQuestion.question,
+                answer,
+                ...evaluation
+            }];
+            setEvaluations(updatedEvaluations);
+            setAnswer('');
+
+            if (currentQuestionIndex < data.questions.length - 1) {
+                setCurrentQuestionIndex(prev => prev + 1);
+            } else {
+                // Navigate to evaluation page with the results
+                navigate('/evaluation', { state: { evaluations: updatedEvaluations, profile: data.candidateProfile } });
+            }
+        } catch (err: any) {
+            setError(err.message || 'Evaluation failed. Please try again.');
+        } finally {
+            setIsEvaluating(false);
         }
     };
 
@@ -78,28 +104,6 @@ export default function InterviewSession() {
                 <Button onClick={() => window.location.reload()} variant="outline" className="gap-2">
                     <RefreshCw size={16} /> Try Again
                 </Button>
-            </div>
-        );
-    }
-
-    if (completed && data) {
-        return (
-            <div className="container max-w-3xl py-12 px-4">
-                <Card className="text-center p-8">
-                    <div className="flex justify-center mb-6">
-                        <div className="h-24 w-24 bg-yellow-100 rounded-full flex items-center justify-center text-yellow-600 animate-bounce">
-                            <Trophy size={48} />
-                        </div>
-                    </div>
-                    <CardTitle className="text-3xl mb-4">Interview Completed!</CardTitle>
-                    <CardDescription className="text-lg mb-8">
-                        You've completed the practice session for the <strong>{data.candidateProfile.role}</strong> role.
-                    </CardDescription>
-                    <div className="flex justify-center gap-4">
-                        <Button onClick={() => navigate('/interview/upload')} variant="outline">Start New Session</Button>
-                        <Button onClick={() => navigate('/')}>Return Home</Button>
-                    </div>
-                </Card>
             </div>
         );
     }
@@ -172,12 +176,18 @@ export default function InterviewSession() {
                             </span>
                             <Button
                                 onClick={handleNext}
-                                disabled={answer.trim().length === 0}
+                                disabled={answer.trim().length === 0 || isEvaluating}
                                 size="lg"
                                 className="gap-2"
                             >
-                                {currentQuestionIndex === data.questions.length - 1 ? 'Finish Interview' : 'Next Question'}
-                                <ChevronRight size={16} />
+                                {isEvaluating ? (
+                                    <>Evaluating... <Loader2 className="animate-spin h-4 w-4" /></>
+                                ) : (
+                                    <>
+                                        {currentQuestionIndex === data.questions.length - 1 ? 'Finish Interview' : 'Next Question'}
+                                        <ChevronRight size={16} />
+                                    </>
+                                )}
                             </Button>
                         </CardFooter>
                     </Card>

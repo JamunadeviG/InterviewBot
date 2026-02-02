@@ -56,16 +56,25 @@ const runOcr = (filePath) => {
                 return;
             }
             try {
+                if (!output.trim()) {
+                    reject(new Error("OCR output is empty"));
+                    return;
+                }
                 const result = JSON.parse(output);
                 if (result.error) {
                     reject(new Error(result.error));
                 } else {
-                    resolve(result.text);
+                    resolve(result.text || "");
                 }
             } catch (err) {
                 console.error("OCR raw output:", output);
-                reject(new Error("Failed to parse OCR output"));
+                reject(new Error(`Failed to parse OCR output: ${err.message}`));
             }
+        });
+
+        pythonProcess.on('error', (err) => {
+            console.error("Failed to start OCR process:", err);
+            reject(new Error(`Failed to start OCR process: ${err.message}`));
         });
     });
 };
@@ -126,14 +135,16 @@ app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
         }
 
         if (cleanedText.length < 50) {
+            console.log(`[Validation] Final text length too short (${cleanedText.length}). Returning 422.`);
             return res.status(422).json({ error: 'The document appears to be empty or unreadable even after OCR. Please upload a clearer PDF.' });
         }
 
+        console.log(`[Success] Resume parsed successfully (${cleanedText.length} chars).`);
         res.json({ text: cleanedText });
 
     } catch (error) {
-        console.error('Error parsing resume:', error);
-        res.status(500).json({ error: 'Failed to parsing resume' });
+        console.error('CRITICAL Error parsing resume:', error);
+        res.status(500).json({ error: `Failed to parse resume: ${error.message}` });
     }
 });
 
@@ -144,32 +155,157 @@ app.post('/api/generate-questions', async (req, res) => {
             return res.status(400).json({ error: 'Resume text is required' });
         }
 
-        const prompt = `
-      Analyze the following resume text. 
-      Identify the candidate's core skills, experience level (Junior, Mid, Senior), and main job role.
-      Then, generate 5 technical interview questions tailored to their skills and experience, and 1 behavioral question.
-      
+        console.log("[AI] Starting multi-stage analysis...");
+
+        // Stage 1: Extraction
+        const extractionPrompt = `
+      Extract the following information from the resume text provided:
+      - Core Skills (as a list)
+      - Key Projects (summary of main projects)
+      - Experience Level (Junior, Mid, Senior)
+      - Total Years of Experience
+      - Education (highest degree and university)
+      - Job Role (the most suitable role based on the resume)
+
       Resume Text:
-      "${resumeText.substring(0, 15000)}" 
-      
+      "${resumeText.substring(0, 15000)}"
+
       Return the output as a valid JSON object with the following schema:
       {
-        "candidateProfile": {
-           "role": "string",
-           "experienceLevel": "string",
-           "skills": ["string"]
-        },
-        "questions": [
-           {
-             "id": number,
-             "question": "string",
-             "type": "Technical" | "Behavioral",
-             "difficulty": "Easy" | "Medium" | "Hard",
-             "topic": "string"
-           }
-        ]
+        "role": "string",
+        "experienceLevel": "string",
+        "skills": ["string"],
+        "projects": "string",
+        "experience": "string",
+        "education": "string"
       }
     `;
+
+        const extractionResponse = await openai.chat.completions.create({
+            messages: [{ role: "system", content: "You are an expert resume analyzer." }, { role: "user", content: extractionPrompt }],
+            model: "gpt-4o",
+            response_format: { type: "json_object" },
+        });
+
+        const profileData = JSON.parse(extractionResponse.choices[0].message.content);
+        console.log("[AI] Profile extracted for role:", profileData.role);
+
+        // Stage 2: Question Generation (Using User's Prompt Template)
+        const generationPrompt = `You are an expert technical interviewer conducting a job interview.
+
+Based on the following resume information, generate 5 relevant interview questions:
+
+**Candidate Resume Data:**
+- Skills: ${profileData.skills.join(', ')}
+- Projects: ${profileData.projects}
+- Experience: ${profileData.experience}
+- Education: ${profileData.education}
+
+**Instructions:**
+1. Generate questions that test both theoretical knowledge and practical application
+2. Include at least 2 questions about specific projects mentioned
+3. Ask about real-world scenarios related to their skills
+4. Mix difficulty levels (2 basic, 2 intermediate, 1 advanced)
+5. Make questions open-ended to assess depth of understanding
+
+**Output Format:**
+Return a JSON array with this structure:
+[
+  {
+    "question": "Your question here",
+    "category": "technical/project/behavioral",
+    "difficulty": "basic/intermediate/advanced",
+    "skill_tested": "specific skill name"
+  }
+]
+
+Generate the questions now.`;
+
+        const generationResponse = await openai.chat.completions.create({
+            messages: [{ role: "system", content: "You are an expert technical interviewer." }, { role: "user", content: generationPrompt }],
+            model: "gpt-4o",
+            response_format: { type: "json_object" },
+        });
+
+        // The user prompt expects an array, but we asked for a json_object from openai.
+        // Usually OpenAI wraps the array in an object if forced to json_object, 
+        // OR we can just parse it if it returns the array directly (if allowed).
+        // To be safe with JSON mode, let's just parse the content.
+
+        let questionsRaw = JSON.parse(generationResponse.choices[0].message.content);
+
+        // Handle case where some models return { "questions": [...] } instead of directly [...]
+        if (!Array.isArray(questionsRaw) && questionsRaw.questions) {
+            questionsRaw = questionsRaw.questions;
+        }
+
+        // Map to frontend schema
+        const mappedQuestions = questionsRaw.map((q, index) => ({
+            id: index + 1,
+            question: q.question,
+            type: q.category.charAt(0).toUpperCase() + q.category.slice(1), // technical -> Technical
+            difficulty: q.difficulty === 'basic' ? 'Easy' : q.difficulty === 'intermediate' ? 'Medium' : 'Hard',
+            topic: q.skill_tested
+        }));
+
+        res.json({
+            candidateProfile: {
+                role: profileData.role,
+                experienceLevel: profileData.experienceLevel,
+                skills: profileData.skills
+            },
+            questions: mappedQuestions
+        });
+
+    } catch (error) {
+        console.error('Error generating questions:', error);
+        res.status(500).json({ error: 'Failed to generate questions. Please ensure your OpenAI API Key is valid.' });
+    }
+});
+
+app.post('/api/evaluate-answer', async (req, res) => {
+    try {
+        const { question, skill_tested, candidate_answer } = req.body;
+
+        if (!question || !candidate_answer) {
+            return res.status(400).json({ error: 'Question and answer are required' });
+        }
+
+        const prompt = `You are an expert interviewer evaluating a candidate's response.
+
+**Question Asked:** ${question}
+
+**Expected Skills/Topics:** ${skill_tested || 'General Technical/Behavioral'}
+
+**Candidate's Answer:** ${candidate_answer}
+
+**Evaluation Criteria:**
+Evaluate the answer on these parameters (score each from 0-10):
+
+1. **Technical Accuracy**: Correctness of information and concepts
+2. **Depth of Knowledge**: How thoroughly they understand the topic
+3. **Communication Clarity**: How well they articulated their answer
+4. **Practical Understanding**: Ability to apply knowledge to real scenarios
+5. **Completeness**: Whether they addressed all parts of the question
+
+**Output Format:**
+Return a JSON object:
+{
+  "scores": {
+    "technical_accuracy": <0-10>,
+    "depth_of_knowledge": <0-10>,
+    "communication_clarity": <0-10>,
+    "practical_understanding": <0-10>,
+    "completeness": <0-10>
+  },
+  "overall_score": <0-100>,
+  "strengths": ["list of strengths observed"],
+  "areas_for_improvement": ["list of areas to improve"],
+  "feedback": "2-3 sentence constructive feedback",
+  "follow_up_question": "optional follow-up question if answer was incomplete"
+}
+
+Evaluate the answer now.`;
 
         const completion = await openai.chat.completions.create({
             messages: [{ role: "system", content: "You are an expert technical interviewer." }, { role: "user", content: prompt }],
@@ -177,18 +313,76 @@ app.post('/api/generate-questions', async (req, res) => {
             response_format: { type: "json_object" },
         });
 
-        const content = completion.choices[0].message.content;
-        if (!content) {
-            throw new Error("Empty response from OpenAI");
-        }
-
-        const data = JSON.parse(content);
-
+        const data = JSON.parse(completion.choices[0].message.content);
         res.json(data);
 
     } catch (error) {
-        console.error('Error generating questions:', error);
-        res.status(500).json({ error: 'Failed to generate questions. Please ensure your OpenAI API Key is valid.' });
+        console.error('Error evaluating answer:', error);
+        res.status(500).json({ error: 'Failed to evaluate answer.' });
+    }
+});
+
+app.post('/api/generate-report', async (req, res) => {
+    try {
+        const { candidate_name, position, interview_date, skills, experience_level, total_questions, average_scores, questions_list, answers_list, detailed_scores } = req.body;
+
+        const prompt = `You are an expert HR analyst generating a comprehensive interview report.
+
+**Candidate Information:**
+- Name: ${candidate_name || 'Candidate'}
+- Position Applied: ${position}
+- Interview Date: ${interview_date}
+
+**Resume Summary:**
+- Skills: ${skills}
+- Experience Level: ${experience_level}
+
+**Interview Performance Data:**
+- Total Questions: ${total_questions}
+- Average Scores: ${average_scores}
+- Questions Asked: ${questions_list}
+- Answers Given: ${answers_list}
+- Individual Scores: ${detailed_scores}
+
+**Task:**
+Generate a comprehensive interview report that includes:
+
+1. **Overall Performance Summary** (2-3 paragraphs)
+2. **Strength Areas** (top 3-4 strengths with examples)
+3. **Areas for Improvement** (3-4 areas with specific recommendations)
+4. **Skill-wise Breakdown** (performance on each technical skill)
+5. **Recommendation** (Strongly Recommend / Recommend / Consider / Not Recommend)
+6. **Hiring Decision Rationale** (2-3 sentences explaining the recommendation)
+7. **Next Steps** (suggested follow-up actions)
+
+**Output Format:**
+Return a well-structured JSON object:
+{
+  "overall_summary": "text",
+  "overall_rating": <1-10>,
+  "strengths": [{ "area": "name", "description": "detail", "example": "specific example" }],
+  "improvements": [{ "area": "name", "description": "detail", "suggestion": "how to improve" }],
+  "skill_breakdown": [{ "skill": "name", "score": <0-10>, "assessment": "brief assessment" }],
+  "recommendation": "Strongly Recommend/Recommend/Consider/Not Recommend",
+  "rationale": "explanation",
+  "next_steps": ["action 1", "action 2"],
+  "interviewer_notes": "any additional observations"
+}
+
+Generate the report now.`;
+
+        const completion = await openai.chat.completions.create({
+            messages: [{ role: "system", content: "You are an expert HR consultant." }, { role: "user", content: prompt }],
+            model: "gpt-4o",
+            response_format: { type: "json_object" },
+        });
+
+        const data = JSON.parse(completion.choices[0].message.content);
+        res.json(data);
+
+    } catch (error) {
+        console.error('Error generating report:', error);
+        res.status(500).json({ error: 'Failed to generate report.' });
     }
 });
 

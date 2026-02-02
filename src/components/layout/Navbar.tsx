@@ -1,15 +1,12 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Bot, LogOut, Menu, User, Settings, LayoutDashboard } from "lucide-react";
+import { Bot, LogOut, Menu } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { AuthModal } from "./AuthModal";
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -19,17 +16,12 @@ export function Navbar() {
     const location = useLocation();
 
     // Auth State
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [showAuthModal, setShowAuthModal] = useState(false);
-    const [authTab, setAuthTab] = useState<"login" | "signup">("login");
-
-    const openAuth = (tab: "login" | "signup") => {
-        setAuthTab(tab);
-        setShowAuthModal(true);
-    };
+    const token = localStorage.getItem('token');
+    const isLoggedIn = !!token;
 
     const handleLogout = () => {
-        setIsLoggedIn(false);
+        localStorage.removeItem('token');
+        navigate('/login');
     };
 
     const navLinks = [
@@ -39,6 +31,8 @@ export function Navbar() {
         { name: "Evaluation", href: "/evaluation" },
         { name: "Contact", href: "/contact" },
     ];
+
+    const navigate = useNavigate();
 
     return (
         <>
@@ -76,33 +70,11 @@ export function Navbar() {
                                     <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                                         <Avatar className="h-8 w-8">
                                             <AvatarImage src="/avatars/01.png" alt="@user" />
-                                            <AvatarFallback>AD</AvatarFallback>
+                                            <AvatarFallback>User</AvatarFallback>
                                         </Avatar>
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent className="w-56" align="end" forceMount>
-                                    <DropdownMenuLabel className="font-normal">
-                                        <div className="flex flex-col space-y-1">
-                                            <p className="text-sm font-medium leading-none">Alex Dev</p>
-                                            <p className="text-xs leading-none text-muted-foreground">
-                                                alex@example.com
-                                            </p>
-                                        </div>
-                                    </DropdownMenuLabel>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem>
-                                        <LayoutDashboard className="mr-2 h-4 w-4" />
-                                        <span>Dashboard</span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem>
-                                        <User className="mr-2 h-4 w-4" />
-                                        <span>Profile</span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem>
-                                        <Settings className="mr-2 h-4 w-4" />
-                                        <span>Settings</span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
                                     <DropdownMenuItem onClick={handleLogout} className="text-red-500 focus:text-red-500">
                                         <LogOut className="mr-2 h-4 w-4" />
                                         <span>Log out</span>
@@ -111,10 +83,12 @@ export function Navbar() {
                             </DropdownMenu>
                         ) : (
                             <div className="flex gap-2">
-                                <Button variant="ghost" onClick={() => openAuth("login")}>
-                                    Sign In
+                                <Button variant="ghost" asChild>
+                                    <Link to="/login">Sign In</Link>
                                 </Button>
-                                <Button onClick={() => openAuth("signup")}>Sign Up</Button>
+                                <Button asChild>
+                                    <Link to="/signup">Sign Up</Link>
+                                </Button>
                             </div>
                         )}
                     </div>
@@ -164,15 +138,15 @@ export function Navbar() {
                                     <Button
                                         variant="ghost"
                                         className="w-full justify-start"
-                                        onClick={() => { openAuth("login"); setIsMenuOpen(false); }}
+                                        asChild
                                     >
-                                        Sign In
+                                        <Link to="/login" onClick={() => setIsMenuOpen(false)}>Sign In</Link>
                                     </Button>
                                     <Button
                                         className="w-full justify-start"
-                                        onClick={() => { openAuth("signup"); setIsMenuOpen(false); }}
+                                        asChild
                                     >
-                                        Sign Up
+                                        <Link to="/signup" onClick={() => setIsMenuOpen(false)}>Sign Up</Link>
                                     </Button>
                                 </div>
                             )}
@@ -180,13 +154,6 @@ export function Navbar() {
                     </div>
                 )}
             </nav>
-
-            <AuthModal
-                isOpen={showAuthModal}
-                onClose={() => setShowAuthModal(false)}
-                defaultTab={authTab}
-                onLoginSuccess={() => setIsLoggedIn(true)}
-            />
         </>
     );
 }

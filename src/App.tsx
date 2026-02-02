@@ -7,6 +7,8 @@ import ResumeUpload from "./pages/interview/ResumeUpload";
 import InterviewSession from "./pages/interview/InterviewSession";
 import EvaluationPage from "./pages/evaluation/EvaluationPage";
 import ContactPage from "./pages/contact/ContactPage";
+import LoginPage from "./pages/auth/LoginPage";
+import SignupPage from "./pages/auth/SignupPage";
 
 function App() {
   return (
@@ -20,6 +22,8 @@ function App() {
           <Route path="interview/session" element={<InterviewSession />} />
           <Route path="evaluation" element={<EvaluationPage />} />
           <Route path="contact" element={<ContactPage />} />
+          <Route path="login" element={<LoginPage />} />
+          <Route path="signup" element={<SignupPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
