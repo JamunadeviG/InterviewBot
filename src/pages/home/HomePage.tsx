@@ -86,7 +86,7 @@ export default function HomePage() {
                             Join thousands of developers who have landed their dream jobs using InterviewBot.
                         </p>
                         <Button size="lg" variant="secondary" asChild className="font-semibold">
-                            <Link to="/signup">Get Started for Free</Link>
+                            <Link to="/roadmap">Get Started for Free</Link>
                         </Button>
                     </div>
                     <Bot className="absolute -bottom-12 -right-12 h-64 w-64 opacity-10 text-primary-foreground rotate-12" />
